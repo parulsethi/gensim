@@ -194,8 +194,8 @@ class Wordrank(Word2Vec):
 def excecute_command(cmd, inp=None, out=None):
     """Execute given commands, to prepare training data."""
     if inp:
-        inp = open(inp)
-    out = open(out, 'w')
+        inp = smart_open(inp)
+    out = smart_open(out, 'w')
     process = subprocess.Popen(cmd, stdin=inp, stdout=out)
     output, err = process.communicate()
     if process.returncode != 0:
