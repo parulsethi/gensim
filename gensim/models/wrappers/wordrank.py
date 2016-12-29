@@ -3,7 +3,6 @@
 
 """
 Python wrapper around word representation learning from Wordrank.
-This module is useful, when the training set is limited (i.e., sparse and noisy).
 The wrapped model can NOT be updated with new documents for online training -- use gensim's
 `Word2Vec` for that.
 
@@ -19,7 +18,6 @@ Note: give the path to wordrank's directory not wordrank binary.
 
 
 import logging
-import tempfile
 import os
 import sys
 import copy
@@ -33,14 +31,13 @@ from gensim.models.word2vec import Word2Vec
 from gensim.scripts.glove2word2vec import glove2word2vec
 
 from six import string_types
-from collections import Counter
 from smart_open import smart_open
 from shutil import copyfile, rmtree
 
-if os.name == 'posix' and sys.version_info[0] < 3:
-    import subprocess32 as subprocess
+if sys.version_info[:2] == (2, 6):
+    from backport_collections import Counter
 else:
-    import subprocess
+    from collections import Counter
 
 logger = logging.getLogger(__name__)
 
@@ -53,17 +50,17 @@ class Wordrank(Word2Vec):
     """
     
     @classmethod
-    def train(cls, wr_path, corpus_file, size=100, window=15, symmetric=1, min_count=5, max_vocab_size=0,
+    def train(cls, wr_path, corpus_file, out_path, size=100, window=15, symmetric=1, min_count=5, max_vocab_size=0,
               sgd_num=100, lrate=0.001, period=10, iter=90, epsilon=0.75, dump_period=10, reg=0, alpha=100,
-              beta=99, loss='hinge', memory=4.0, cleanup_files=False, sorted_vocab=1, ensemble=1):
+              beta=99, loss='hinge', memory=4.0, cleanup_files=False, sorted_vocab=1, ensemble=0):
         """
         `wr_path` is the path to the Wordrank directory.
         `corpus_file` is the filename of the text file to be used for training the Wordrank model.
         Expects file to contain space-separated tokens in a single line
+        `out_path` is the path to directory which will be created to save embeddings and training data.
         `size` is the dimensionality of the feature vectors.
         `window` is the number of context words to the left (and to the right, if symmetric = 1).
         symmetric` if 0, only use left context words, else use left and right both.
-        `alpha` is the initial learning rate (will linearly drop to `min_alpha` as training progresses).
         `min_count` = ignore all words with total frequency lower than this.
         `max_vocab_size` upper bound on vocabulary size, i.e. keep the <int> most frequent words. Default is 0 for no limit.
         `sgd_num` number of SGD taken for each data point.
@@ -77,9 +74,9 @@ class Wordrank(Word2Vec):
         `beta` is the beta parameter of gamma distribution.
         `loss` = name of the loss (logistic, hinge).
         `memory` = soft limit for memory consumption, in GB.
-        `cleanup_files` whether or not to delete temporary directory and files used by this wrapper, setting to False can be useful for debugging
+        `cleanup_files` if to delete directory and files used by this wrapper, setting to False can be useful for debugging
         `sorted_vocab` = if 1 (default), sort the vocabulary by descending frequency before assigning word indexes.
-        `ensemble` = 1 (default), use ensemble of word and context vectors
+        `ensemble` = 0 (default), use ensemble of word and context vectors
         """
 
         meta_data_path = 'matrix.meta'
@@ -88,22 +85,38 @@ class Wordrank(Word2Vec):
         cooccurrence_file = 'cooccurrence'
         cooccurrence_shuf_file = 'wiki.toy'
         meta_file = 'meta'
+        
+        # prepare training data (cooccurrence matrix and vocab)
+        model_dir = os.path.join(wr_path, out_path)
+        meta_dir = os.path.join(model_dir, 'meta')
+        os.makedirs(meta_dir)
+        logger.info("Dumped data will be stored in '%s'", model_dir)
+        copyfile(corpus_file, os.path.join(meta_dir, corpus_file.split('/')[-1]))
+        os.chdir(meta_dir)
 
         cmd0 = ['../../glove/vocab_count', '-min-count', str(min_count), '-max-vocab', str(max_vocab_size)]
         cmd1 = ['../../glove/cooccur', '-memory', str(memory), '-vocab-file', temp_vocab_file, '-window-size', str(window), '-symmetric', str(symmetric)]
         cmd2 = ['../../glove/shuffle', '-memory', str(memory)]
         cmd3 = ['cut', '-d', " ", '-f', '1', temp_vocab_file]
-
         cmds = [cmd0, cmd1, cmd2, cmd3]
-        inputs = [corpus_file, corpus_file, cooccurrence_file, None]
-        outputs = [temp_vocab_file, cooccurrence_file, cooccurrence_shuf_file, vocab_file]
-        
-        # prepare training data (cooccurrence matrix and vocab)
-        model_dir = tempfile.mkdtemp(dir=wr_path)
-        meta_dir = tempfile.mkdtemp(dir=model_dir)
-        copyfile(corpus_file, os.path.join(meta_dir, corpus_file))
-        os.chdir(meta_dir)
-        prepare_train_data = [excecute_command(cmd, inp, out) for cmd, inp, out in zip(cmds, inputs, outputs)]
+        logger.info("Preparing training data using glove code '%s'", cmds)
+        o0 = smart_open(temp_vocab_file, 'w')
+        o1 = smart_open(cooccurrence_file, 'w')
+        o2 = smart_open(cooccurrence_shuf_file, 'w')
+        o3 = smart_open(vocab_file, 'w')
+        i0 = smart_open(corpus_file)
+        i2 = smart_open(cooccurrence_file)
+        i3 = None
+        outputs = [o0, o1, o2, o3]
+        inputs = [i0, i0, i2, i3]
+        prepare_train_data = [utils.check_output(cmd, stdin=inp, stdout=out) for cmd, inp, out in zip(cmds, inputs, outputs)]
+        o0.close()
+        o1.close()
+        o2.close()
+        o3.close()
+        i0.close()
+        i2.close()
+
         with smart_open(vocab_file) as f:
             numwords = sum(1 for line in f)
         with smart_open(cooccurrence_shuf_file) as f:
@@ -112,7 +125,7 @@ class Wordrank(Word2Vec):
             f.write("{} {}\n{} {}\n{} {}".format(numwords, numwords, numlines, cooccurrence_shuf_file, numwords, vocab_file))
 
         wr_args = {
-            'path': meta_dir.split('/')[2],
+            'path': 'meta',
             'nthread': multiprocessing.cpu_count(),
             'sgd_num': sgd_num,
             'lrate': lrate,
@@ -134,12 +147,13 @@ class Wordrank(Word2Vec):
         for option, value in wr_args.items():
             cmd.append("--%s" % option)
             cmd.append(str(value))
+        logger.info("Running wordrank binary '%s'", cmd)
         output = utils.check_output(args=cmd)
 
-        max_iter_dump = iter/dump_period*dump_period
+        max_iter_dump = iter / dump_period * dump_period - 1
         copyfile('model_word_%d.txt' % max_iter_dump, 'wordrank.words')
         copyfile('model_context_%d.txt' % max_iter_dump, 'wordrank.contexts')
-        model = cls.load_wordrank_model('wordrank.words', os.path.join(meta_dir.split('/')[2], vocab_file), 'wordrank.contexts', sorted_vocab, ensemble)
+        model = cls.load_wordrank_model('wordrank.words', os.path.join('meta', vocab_file), 'wordrank.contexts', sorted_vocab, ensemble)
         os.chdir('../..')
 
         if cleanup_files:
@@ -189,16 +203,4 @@ class Wordrank(Word2Vec):
             c_emb.wv.syn0[word_id] = prev_c_emb[c_emb.wv.vocab[word].index]
         new_emb = w_emb.wv.syn0 + c_emb.wv.syn0
         self.wv.syn0 = new_emb
-
-
-def excecute_command(cmd, inp=None, out=None):
-    """Execute given commands, to prepare training data."""
-    if inp:
-        inp = smart_open(inp)
-    out = smart_open(out, 'w')
-    process = subprocess.Popen(cmd, stdin=inp, stdout=out)
-    output, err = process.communicate()
-    if process.returncode != 0:
-        raise subprocess.CalledProcessError(process.returncode, process.args, output=output)
-    out.flush()
 
