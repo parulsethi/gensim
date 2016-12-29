@@ -22,7 +22,7 @@ module_path = os.path.dirname(__file__) # needed because sample data files are l
 datapath = lambda fname: os.path.join(module_path, 'test_data', fname)
 
 def testfile():
-    # temporary data will be stored to this file
+    # temporary model will be stored to this file
     return os.path.join(tempfile.gettempdir(), 'gensim_wordrank.test')
 
 class TestWordrank(unittest.TestCase):
@@ -30,44 +30,46 @@ class TestWordrank(unittest.TestCase):
         wr_home = os.environ.get('WR_HOME', None)
         self.wr_path = wr_home if wr_home else None
         self.corpus_file = datapath('lee.cor')
-        if self.wr_path:
-            self.test_model = wordrank.Wordrank.train(self.wr_path, self.corpus_file)
-
-    def testTraining(self):
-        """Test model successfully trained"""
+        self.out_path = 'testmodel'
+        self.wr_file = datapath('test_glove.txt')
         if not self.wr_path:
             return
-        model = wordrank.Wordrank.train(self.wr_path, self.corpus_file, size=10)
-        self.assertEqual(model.wv.syn0.shape, (len(model.wv.vocab), 10))
+        self.test_model = wordrank.Wordrank.train(self.wr_path, self.corpus_file, self.out_path, iter=6, dump_period=5,period=5)
+
+    def testLoadWordrankFormat(self):
+        """Test model successfully loaded from Wordrank format file"""
+        model = wordrank.Wordrank.load_wordrank_model(self.wr_file)
+        vocab_size, dim = 76, 50
+        self.assertEqual(model.wv.syn0.shape, (vocab_size, dim))
+        self.assertEqual(len(model.wv.vocab), vocab_size)
+        os.remove(self.wr_file+'.w2vformat')
+
+    def testEnsemble(self):
+        """Test ensemble of two embeddings"""
+        if not self.wr_path:
+            return
+        new_emb = self.test_model.ensemble_embedding(self.wr_file, self.wr_file)
+        self.assertEqual(new_emb.shape, (76, 50))
+        os.remove(self.wr_file+'.w2vformat')
 
     def testPersistence(self):
-        """Test storing/loading the entire model."""
+        """Test storing/loading the entire model"""
         if not self.wr_path:
             return
-        model = wordrank.Wordrank.train(self.wr_path, self.corpus_file)
-        model.save(testfile())
+        self.test_model.save(testfile())
         loaded = wordrank.Wordrank.load(testfile())
-        self.models_equal(model, loaded)
-
-    def testLoadWordrank(self):
-        """Test model successfully loaded from wordrank .test files"""
-        if not self.wr_path:
-            return
-        model = wordrank.Wordrank.load_wordrank_model(testfile())
-        self.assertTrue(model.wv.syn0.shape == (len(model.wv.vocab), 10))
+        self.models_equal(self.test_model, loaded)
 
     def testSimilarity(self):
         """Test n_similarity for vocab words"""
         if not self.wr_path:
             return
-        # In vocab, sanity check
         self.assertTrue(numpy.allclose(self.test_model.n_similarity(['the', 'and'], ['and', 'the']), 1.0))
         self.assertEqual(self.test_model.similarity('the', 'and'), self.test_model.similarity('the', 'and'))
 
     def testLookup(self):
         if not self.wr_path:
             return
-        # In vocab, sanity check
         self.assertTrue(numpy.allclose(self.test_model['night'], self.test_model[['night']]))
 
     def models_equal(self, model, model2):
@@ -78,3 +80,5 @@ class TestWordrank(unittest.TestCase):
 if __name__ == '__main__':
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.DEBUG)
     unittest.main()
+
+    

@@ -10,8 +10,6 @@ Example:
 >>> model = gensim.models.wrappers.Wordrank('/Users/dummy/wordrank', corpus_file='text8')
 >>> print model[word]  # prints vector for given words
 
-Note: give the path to wordrank's directory not wordrank binary.
-
 .. [1] https://bitbucket.org/shihaoji/wordrank/
 .. [2] https://arxiv.org/pdf/1506.02761v3.pdf
 """
@@ -52,7 +50,7 @@ class Wordrank(Word2Vec):
     @classmethod
     def train(cls, wr_path, corpus_file, out_path, size=100, window=15, symmetric=1, min_count=5, max_vocab_size=0,
               sgd_num=100, lrate=0.001, period=10, iter=90, epsilon=0.75, dump_period=10, reg=0, alpha=100,
-              beta=99, loss='hinge', memory=4.0, cleanup_files=False, sorted_vocab=1, ensemble=0):
+              beta=99, loss='hinge', memory=4.0, cleanup_files=True, sorted_vocab=1, ensemble=0):
         """
         `wr_path` is the path to the Wordrank directory.
         `corpus_file` is the filename of the text file to be used for training the Wordrank model.
@@ -104,17 +102,19 @@ class Wordrank(Word2Vec):
         o1 = smart_open(cooccurrence_file, 'w')
         o2 = smart_open(cooccurrence_shuf_file, 'w')
         o3 = smart_open(vocab_file, 'w')
-        i0 = smart_open(corpus_file)
+        i0 = smart_open(corpus_file.split('/')[-1])
+        i1 = smart_open(corpus_file.split('/')[-1])
         i2 = smart_open(cooccurrence_file)
         i3 = None
         outputs = [o0, o1, o2, o3]
-        inputs = [i0, i0, i2, i3]
+        inputs = [i0, i1, i2, i3]
         prepare_train_data = [utils.check_output(cmd, stdin=inp, stdout=out) for cmd, inp, out in zip(cmds, inputs, outputs)]
         o0.close()
         o1.close()
         o2.close()
         o3.close()
         i0.close()
+        i1.close()
         i2.close()
 
         with smart_open(vocab_file) as f:
@@ -203,4 +203,5 @@ class Wordrank(Word2Vec):
             c_emb.wv.syn0[word_id] = prev_c_emb[c_emb.wv.vocab[word].index]
         new_emb = w_emb.wv.syn0 + c_emb.wv.syn0
         self.wv.syn0 = new_emb
+        return new_emb
 
