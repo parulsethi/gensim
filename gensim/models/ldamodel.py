@@ -29,12 +29,15 @@ The algorithm:
 
 """
 
-
+from visdom_helper import Dashboard
 import logging
 import numpy as np
 import numbers
 from random import sample
 import os
+import gensim
+import copy
+from visdom import Visdom
 
 from gensim import interfaces, utils, matutils
 from gensim.matutils import dirichlet_expectation
@@ -195,7 +198,7 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                  alpha='symmetric', eta=None, decay=0.5, offset=1.0,
                  eval_every=10, iterations=50, gamma_threshold=0.001,
                  minimum_probability=0.01, random_state=None, ns_conf={},
-                 minimum_phi_value=0.01, per_word_topics=False):
+                 minimum_phi_value=0.01, per_word_topics=False, viz=False):
         """
         If given, start training from the iterable `corpus` straight away. If not given,
         the model is left untrained (presumably because you want to call `update()` manually).
@@ -280,6 +283,9 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         self.eval_every = eval_every
         self.minimum_phi_value = minimum_phi_value
         self.per_word_topics = per_word_topics
+        self.viz = viz
+        if self.viz:
+            self.viz_logs = {"Coherence":[], "Perplexity":[], "Convergence":[], "Diff":[]}
 
         self.alpha, self.optimize_alpha = self.init_dir_prior(alpha, 'alpha')
 
@@ -626,6 +632,11 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         def rho():
             return pow(offset + pass_ + (self.num_updates / chunksize), -decay)
 
+        if self.viz:
+            viz_window = Visdom()
+            previous = copy.deepcopy(self)
+            # vis = Dashboard('viz_heatmap')
+
         for pass_ in xrange(passes):
             if self.dispatcher:
                 logger.info('initializing %s workers' % self.numworkers)
@@ -673,6 +684,7 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                     else:
                         other = LdaState(self.eta, self.state.sstats.shape)
                     dirty = False
+
             # endfor single corpus iteration
             if reallen != lencorpus:
                 raise RuntimeError("input corpus size changed during training (don't use generators as input)")
@@ -686,6 +698,37 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                 self.do_mstep(rho(), other, pass_ > 0)
                 del other
                 dirty = False
+
+            if self.viz:
+                # calculate coherence
+                cm = gensim.models.CoherenceModel(model=self, corpus=corpus, coherence="u_mass")
+                Coherence = np.array([cm.get_coherence()])
+
+                # calculate perplexity
+                corpus_words = sum(cnt for document in corpus for _, cnt in document)
+                perwordbound = self.bound(corpus) / corpus_words
+                Perplexity = np.array([np.exp2(-perwordbound)])
+
+                # calculate diff    
+                diff_matrix = self.diff(previous)[0]
+                diff_diagonal = np.diagonal(diff_matrix)
+                previous = copy.deepcopy(self)
+                Convergence = np.array([np.sum(diff_diagonal)])
+                # Diff = np.array([diff_diagonal])
+
+                if pass_ == 0:
+                    viz_coherence = viz_window.line(Y=Coherence, X=np.array([pass_]), opts=dict(xlabel='Epochs', ylabel='Coherence', title='Coherence'))
+                    viz_perplexity = viz_window.line(Y=Perplexity, X=np.array([pass_]), opts=dict(xlabel='Epochs', ylabel='Perplexity', title='Perplexity'))
+                    viz_convergence = viz_window.line(Y=Convergence, X=np.array([pass_]), opts=dict(xlabel='Epochs', ylabel='Convergence', title='Convergence'))
+                    # viz_diff = viz_window.heatmap(X=Diff.T, opts=dict(xlabel='Epochs', ylabel='Topic', title='Diff')) 
+                    # vis.plot('viz_heatmap', 'heatmap', X=Diff.T, opts=dict(xlabel='Epochs', ylabel='Topic', title='Diff'))
+                else:
+                    viz_window.updateTrace(Y=Coherence, X=np.array([pass_]), win=viz_coherence)
+                    viz_window.updateTrace(Y=Perplexity, X=np.array([pass_]), win=viz_perplexity)
+                    viz_window.updateTrace(Y=Convergence, X=np.array([pass_]), win=viz_convergence)
+                    # viz_window.heatmap(X=Diff.T, win=viz_diff)
+                    # vis.append('viz_heatmap', 'heatmap', X=Diff.T)
+
         # endfor entire corpus update
 
     def do_mstep(self, rho, other, extra_pass=False):
