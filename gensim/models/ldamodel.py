@@ -198,7 +198,7 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                  eval_every=10, iterations=50, gamma_threshold=0.001,
                  minimum_probability=0.01, random_state=None, ns_conf={},
                  minimum_phi_value=0.01, per_word_topics=False, viz=False,
-                 coherence="u_mass", distance="jaccard"):
+                 coherence="u_mass", distance="kulback_leibler"):
         """
         If given, start training from the iterable `corpus` straight away. If not given,
         the model is left untrained (presumably because you want to call `update()` manually).
@@ -544,8 +544,8 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
 
     def update(self, corpus, chunksize=None, decay=None, offset=None,
                passes=None, update_every=None, eval_every=None, iterations=None,
-               gamma_threshold=None, chunks_as_numpy=False, viz=False,
-               coherence="u_mass", distance="jaccard"):
+               gamma_threshold=None, chunks_as_numpy=False, viz=None,
+               coherence=None, distance=None):
         """
         Train the model with new documents, by EM-iterating over `corpus` until
         the topics converge (or until the maximum number of allowed iterations
@@ -612,7 +612,7 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         if viz:
             if coherence is None:
                 coherence = self.coherence
-            if distance is NoneL
+            if distance is None:
                 distance = self.distance
 
         if update_every:
@@ -726,8 +726,8 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                 Perplexity = np.array([np.exp2(-perwordbound)])
 
                 # calculate diff    
-                diff_matrix = self.diff(previous)[0]
-                diff_diagonal = np.diagonal(diff_matrix, distance=distance)
+                diff_matrix = self.diff(previous, distance=distance)[0]
+                diff_diagonal = np.diagonal(diff_matrix)
                 previous = copy.deepcopy(self)
                 Convergence = np.array([np.sum(diff_diagonal)])
 
@@ -745,7 +745,7 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                     viz_window.updateTrace(Y=Coherence, X=np.array([pass_]), win=viz_coherence)
                     viz_window.updateTrace(Y=Perplexity, X=np.array([pass_]), win=viz_perplexity)
                     viz_window.updateTrace(Y=Convergence, X=np.array([pass_]), win=viz_convergence)
-                    viz_window.heatmap(X=np.array(Diff_mat).T, win=viz_diff)
+                    viz_window.heatmap(X=np.array(Diff_mat).T, win=viz_diff, opts=dict(xlabel='Epochs', ylabel='Topic', title='Diff (%s)' % distance))
 
         # endfor entire corpus update
 
