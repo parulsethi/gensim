@@ -29,7 +29,6 @@ The algorithm:
 
 """
 
-from visdom_helper import Dashboard
 import logging
 import numpy as np
 import numbers
@@ -37,12 +36,12 @@ from random import sample
 import os
 import gensim
 import copy
-from visdom import Visdom
 
 from gensim import interfaces, utils, matutils
 from gensim.matutils import dirichlet_expectation
 from gensim.models import basemodel
 from gensim.matutils import kullback_leibler, hellinger, jaccard_distance
+from visdom import Visdom
 
 from itertools import chain
 from scipy.special import gammaln, psi  # gamma function utils
@@ -198,7 +197,8 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                  alpha='symmetric', eta=None, decay=0.5, offset=1.0,
                  eval_every=10, iterations=50, gamma_threshold=0.001,
                  minimum_probability=0.01, random_state=None, ns_conf={},
-                 minimum_phi_value=0.01, per_word_topics=False, viz=False):
+                 minimum_phi_value=0.01, per_word_topics=False, viz=False,
+                 coherence="u_mass", distance="jaccard"):
         """
         If given, start training from the iterable `corpus` straight away. If not given,
         the model is left untrained (presumably because you want to call `update()` manually).
@@ -241,6 +241,12 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         `minimum_probability` controls filtering the topics returned for a document (bow).
 
         `random_state` can be a np.random.RandomState object or the seed for one
+
+        `viz` set True for visualizing LDA training stats in Visdom
+
+        `coherence` measure to be used for Coherence plot visualization
+
+        `distance` measure to be used for Diff plot visualization
 
         Example:
 
@@ -285,7 +291,8 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         self.per_word_topics = per_word_topics
         self.viz = viz
         if self.viz:
-            self.viz_logs = {"Coherence":[], "Perplexity":[], "Convergence":[], "Diff":[]}
+            self.coherence = coherence
+            self.distance = distance
 
         self.alpha, self.optimize_alpha = self.init_dir_prior(alpha, 'alpha')
 
@@ -537,7 +544,8 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
 
     def update(self, corpus, chunksize=None, decay=None, offset=None,
                passes=None, update_every=None, eval_every=None, iterations=None,
-               gamma_threshold=None, chunks_as_numpy=False):
+               gamma_threshold=None, chunks_as_numpy=False, viz=False,
+               coherence="u_mass", distance="jaccard"):
         """
         Train the model with new documents, by EM-iterating over `corpus` until
         the topics converge (or until the maximum number of allowed iterations
@@ -599,6 +607,14 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
 
         self.state.numdocs += lencorpus
 
+        if viz is None:
+            viz = self.viz
+        if viz:
+            if coherence is None:
+                coherence = self.coherence
+            if distance is NoneL
+                distance = self.distance
+
         if update_every:
             updatetype = "online"
             if passes == 1:
@@ -634,8 +650,8 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
 
         if self.viz:
             viz_window = Visdom()
+            # save initial random state of model for Diff calculation with first epoch
             previous = copy.deepcopy(self)
-            # vis = Dashboard('viz_heatmap')
 
         for pass_ in xrange(passes):
             if self.dispatcher:
@@ -701,7 +717,7 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
 
             if self.viz:
                 # calculate coherence
-                cm = gensim.models.CoherenceModel(model=self, corpus=corpus, coherence="u_mass")
+                cm = gensim.models.CoherenceModel(model=self, corpus=corpus, coherence=coherence)
                 Coherence = np.array([cm.get_coherence()])
 
                 # calculate perplexity
@@ -711,23 +727,25 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
 
                 # calculate diff    
                 diff_matrix = self.diff(previous)[0]
-                diff_diagonal = np.diagonal(diff_matrix)
+                diff_diagonal = np.diagonal(diff_matrix, distance=distance)
                 previous = copy.deepcopy(self)
                 Convergence = np.array([np.sum(diff_diagonal)])
-                # Diff = np.array([diff_diagonal])
 
                 if pass_ == 0:
-                    viz_coherence = viz_window.line(Y=Coherence, X=np.array([pass_]), opts=dict(xlabel='Epochs', ylabel='Coherence', title='Coherence'))
+                    # initial plot windows
+                    Diff_mat = np.array([diff_diagonal])
+                    viz_coherence = viz_window.line(Y=Coherence, X=np.array([pass_]), opts=dict(xlabel='Epochs', ylabel='Coherence', title='Coherence (%s)' % coherence))
                     viz_perplexity = viz_window.line(Y=Perplexity, X=np.array([pass_]), opts=dict(xlabel='Epochs', ylabel='Perplexity', title='Perplexity'))
-                    viz_convergence = viz_window.line(Y=Convergence, X=np.array([pass_]), opts=dict(xlabel='Epochs', ylabel='Convergence', title='Convergence'))
-                    # viz_diff = viz_window.heatmap(X=Diff.T, opts=dict(xlabel='Epochs', ylabel='Topic', title='Diff')) 
-                    # vis.plot('viz_heatmap', 'heatmap', X=Diff.T, opts=dict(xlabel='Epochs', ylabel='Topic', title='Diff'))
+                    viz_convergence = viz_window.line(Y=Convergence, X=np.array([pass_]), opts=dict(xlabel='Epochs', ylabel='Convergence', title='Convergence (%s)' % distance))
+                    viz_diff = viz_window.heatmap(X=np.array(Diff_mat).T, opts=dict(xlabel='Epochs', ylabel='Topic', title='Diff (%s)' % distance)) 
+
                 else:
+                    # update the plot with each epoch
+                    Diff_mat = np.concatenate((Diff_mat, np.array([diff_diagonal])))
                     viz_window.updateTrace(Y=Coherence, X=np.array([pass_]), win=viz_coherence)
                     viz_window.updateTrace(Y=Perplexity, X=np.array([pass_]), win=viz_perplexity)
                     viz_window.updateTrace(Y=Convergence, X=np.array([pass_]), win=viz_convergence)
-                    # viz_window.heatmap(X=Diff.T, win=viz_diff)
-                    # vis.append('viz_heatmap', 'heatmap', X=Diff.T)
+                    viz_window.heatmap(X=np.array(Diff_mat).T, win=viz_diff)
 
         # endfor entire corpus update
 
