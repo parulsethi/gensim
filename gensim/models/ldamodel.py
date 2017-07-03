@@ -195,7 +195,7 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                  alpha='symmetric', eta=None, decay=0.5, offset=1.0,
                  eval_every=10, iterations=50, gamma_threshold=0.001,
                  minimum_probability=0.01, random_state=None, ns_conf={},
-                 minimum_phi_value=0.01, per_word_topics=False):
+                 minimum_phi_value=0.01, per_word_topics=False, callbacks=None):
         """
         If given, start training from the iterable `corpus` straight away. If not given,
         the model is left untrained (presumably because you want to call `update()` manually).
@@ -626,6 +626,9 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         def rho():
             return pow(offset + pass_ + (self.num_updates / chunksize), -decay)
 
+        if callbacks:
+            callbacks.set_model(self)
+
         for pass_ in xrange(passes):
             if self.dispatcher:
                 logger.info('initializing %s workers' % self.numworkers)
@@ -673,6 +676,10 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                     else:
                         other = LdaState(self.eta, self.state.sstats.shape)
                     dirty = False
+
+            if callbacks:
+                callbacks.on_epoch_end(pass_)
+
             # endfor single corpus iteration
             if reallen != lencorpus:
                 raise RuntimeError("input corpus size changed during training (don't use generators as input)")
