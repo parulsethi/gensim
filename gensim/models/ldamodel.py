@@ -627,7 +627,9 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
             return pow(offset + pass_ + (self.num_updates / chunksize), -decay)
 
         if callbacks:
-            callbacks.set_model(self)
+            # metrics would be set in it's self
+            for callback in callbacks:
+                callback.set_model(self)
 
         for pass_ in xrange(passes):
             if self.dispatcher:
@@ -678,7 +680,8 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                     dirty = False
 
             if callbacks:
-                callbacks.on_epoch_end(pass_)
+                for callback in callbacks:
+                    callback.on_epoch_end(pass_)
 
             # endfor single corpus iteration
             if reallen != lencorpus:
