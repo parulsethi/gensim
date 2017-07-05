@@ -280,6 +280,7 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         self.eval_every = eval_every
         self.minimum_phi_value = minimum_phi_value
         self.per_word_topics = per_word_topics
+        self.callbacks = callbacks
 
         self.alpha, self.optimize_alpha = self.init_dir_prior(alpha, 'alpha')
 
@@ -626,9 +627,8 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         def rho():
             return pow(offset + pass_ + (self.num_updates / chunksize), -decay)
 
-        if callbacks:
-            # metrics would be set in it's self
-            for callback in callbacks:
+        if self.callbacks:
+            for callback in self.callbacks:
                 callback.set_model(self)
 
         for pass_ in xrange(passes):
@@ -679,13 +679,13 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                         other = LdaState(self.eta, self.state.sstats.shape)
                     dirty = False
 
-            if callbacks:
-                for callback in callbacks:
-                    callback.on_epoch_end(pass_)
-
             # endfor single corpus iteration
             if reallen != lencorpus:
                 raise RuntimeError("input corpus size changed during training (don't use generators as input)")
+
+            if self.callbacks:
+                for callback in self.callbacks:
+                    callback.on_epoch_end(pass_)
 
             if dirty:
                 # finish any remaining updates

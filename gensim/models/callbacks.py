@@ -1,110 +1,67 @@
-TopicMetrics(object):
-    
-    def get_coherence(self, model, corpus, coherence, texts, window_size, topn):
-        corpus_words = sum(cnt for document in chunk for _, cnt in document)
-        cm = gensim.models.CoherenceModel(model=self, corpus=corpus, texts=texts, coherence=coherence, window_size=coherence_window_size, topn=coherence_topn)
-        return cm.get_coherence(), corpus_words
-
-    def get_perplexity(self, model, corpus):
-        corpus_words = sum(cnt for document in corpus for _, cnt in document)
-        perwordbound = model.bound(corpus) / corpus_words
-        return np.exp2(-perwordbound), corpus_words
-
-    def get_diff(self, model, corpus, previous):
-        diff_matrix = self.diff(previous, distance=diff_distance)[0]
-        diff_diagonal = np.diagonal(diff_matrix)
-        return diff_diagonal
-
-    def get_convergence(self, model, corpus, previous):
-        diff_matrix = self.diff(previous, distance=diff_distance)[0]
-        diff_diagonal = np.diagonal(diff_matrix)
-        convergence = np.sum(diff_diagonal)
-        return convergence
+import gensim
+import logging
+import numpy as np
+from visdom import Visdom
 
 
-Log(TopicMetrics):
+class CoherenceCallback(object):
+    def __init__(self, model=None, topics=None, texts=None, corpus=None, dictionary=None, coherence=None, window_size=None, topn=None, logger=None, viz_env=None):
+        self.model = model
+        self.topics = topics
+        self.corpus = corpus
+        self.dictionary = dictionary
+        self.metric = coherence
+        self.texts = texts
+        self.window_size = window_size
+        self.topn = topn
+        self.logger = logger
+        self.viz_env = viz_env
 
-    def __init__(self, coherence="u_mass", coherence_texts=None, coherence_window_size=None, coherence_topn=10, diff_distance="kullback_leibler"):
+    def get_metric(self, topics=None):
+        if topics is None:
+            topics = self.topics
+        cm = gensim.models.CoherenceModel(self.model, topics, self.texts, self.corpus, self.dictionary, self.window_size, self.metric, self.topn)
+        return cm.get_coherence()
 
     def set_model(self, model):
         self.model = model
-        if diff_distance:
-            previous = copy.deepcopy(model)
+        if self.logger=='visdom':
+            self.viz_window = Visdom()
+            self.visualize = Visualize(self.viz_env, self.viz_window)
+        if self.logger=='shell':
+            self.log = Log(type(self.model))
 
-    def on_epoch_end(self, epoch, chunk):
-
-        if coherence:
-            cm, corpus_words = self.get_coherence(self.model, self.corpus)
-            logger.info("%.3f coherence estimate based on a held-out corpus of %i documents with %i words", cm, len(chunk), corpus_words)
-
-        if perplexity:
-            pl, corpus_words = self.get_perplexity(self.model, self.corpus)
-            logger.info("%.3f per-word bound, %.1f perplexity estimate based on a held-out corpus of %i documents with %i words" % (perwordbound, pl, len(chunk), corpus_words))
-
-        if diff:
-            df = self.get_diff()
-            prev_epoch = epoch-1
-            logger.info("Topic difference between %s and %s epoch: %s", prev_epoch, epoch, df)
-
-        if convergence:
-            cv = self.get_convergence()
-            logger.info("Convergence at %s epoch: ", cv)
+    def on_epoch_end(self, epoch, topics=None):
+        # provide topics after current epoch if coherence is not valid for this topic model
+        value = self.get_metric(topics=topics)
+        if self.logger=='visdom':
+            self.visualize.line_plot(value, epoch, 'Epochs', 'Coherence', 'Coherence (%s)' % self.metric)
+        if self.logger=='shell':
+            statement = "Coherence estimate: %.3f" % value
+            self.log.log_metric(statement)
 
 
+class Visualize(object):
+    def __init__(self, viz_env, viz_window):
+        self.env = viz_env
+        self.window = viz_window
 
-Visualizer(TopicMetrics):
+    def line_plot(self, value, epoch, xlabel, ylabel, title):
+        value = np.array([value])
+        epoch = np.array([epoch])
+        if epoch == 0:
+            self.viz_metric = self.window.line(Y=value, X=epoch, env=self.env, opts=dict(xlabel=xlabel, ylabel=ylabel, title=title))
+        else:
+            self.window.updateTrace(Y=value, X=epoch, env=self.env, win=self.viz_metric)
 
-    def __init__(self, viz_env=None, coherence="u_mass", coherence_texts=None, coherence_window_size=None, coherence_topn=10, diff_distance="kullback_leibler"):
+    # def heatmap_plot():
 
-    def set_model(self, model, corpus):
-        self.viz_window = Visdom()
-        self.model = model
-        self.corpus = corpus
-        if diff_distance:
-            previous = copy.deepcopy(model)
 
-    def on_epoch_end(self, epoch):
-
-        if coherence:
-            # calculate coherence
-            cm = self.get_coherence(self.model, self.corpus)
-            coherence_value = np.array([cm])
-            if epoch == 0:
-                # initial plot window
-                self.viz_coherence = self.viz_window.line(Y=coherence_value, X=np.array([epoch]), env=viz_env, opts=dict(xlabel='Epochs', ylabel='Coherence', title='Coherence (%s)' % coherence))
-            else:
-                self.viz_window.updateTrace(Y=coherence_value, X=np.array([epoch]), env=viz_env, win=self.viz_coherence)
-
-        if perplexity:
-            # calculate perplexity
-            pl = self.get_perplexity(self.model, self.corpus)
-            perplexity_value = np.array([pl])
-            if epoch == 0:
-                # initial plot window
-                self.viz_perplexity = self.viz_window.line(Y=perplexity, X=np.array([epoch]), env=viz_env, opts=dict(xlabel='Epochs', ylabel='Perplexity', title='Perplexity'))
-            else:
-                self.viz_window.updateTrace(Y=perplexity, X=np.array([epoch]), env=viz_env, win=self.viz_perplexity)
-
-        if diff:
-            # calculate diff
-            df = self.get_diff()
-            diff_value = np.array([df])
-            if epoch == 0:
-                # initial plot window
-                self.diff_mat = np.array([diff_diagonal])
-                self.viz_diff = self.viz_window.heatmap(X=np.array(self.diff_mat).T, env=viz_env, opts=dict(xlabel='Epochs', ylabel='Topic', title='Diff (%s)' % diff_distance)) 
-            else:
-                # update the plot with each epoch
-                self.diff_mat = np.concatenate((self.diff_mat, np.array([diff_diagonal])))
-                self.viz_window.heatmap(X=np.array(self.diff_mat).T, env=viz_env, win=self.viz_diff, opts=dict(xlabel='Epochs', ylabel='Topic', title='Diff (%s)' % diff_distance))
-
-        if convergence:
-            # calculate convergence
-            cm = self.get_convergence()
-            coherence_value = np.array([cm])
-            if epoch == 0:
-                # initial plot window
-                self.viz_convergence = viz_window.line(Y=convergence, X=np.array([epoch]), env=viz_env, opts=dict(xlabel='Epochs', ylabel='Convergence', title='Convergence (%s)' % diff_distance))
-            else:
-                viz_window.updateTrace(Y=convergence, X=np.array([epoch]), env=viz_env, win=self.viz_convergence)
+class Log(object):
+    def __init__(self, model_type):
+        model_type = str(model_type)
+        self.log_type = logging.getLogger(model_type)
+        
+    def log_metric(self, statement):
+            self.log_type.info(statement)
 
