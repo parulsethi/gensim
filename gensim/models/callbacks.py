@@ -30,7 +30,7 @@ class Perplexity(object):
 	def get_value(self, arg):
 
 		
-class DiffMetric(object):
+class Diff(object):
 	def __init__():
 
 	def get_value(self):
