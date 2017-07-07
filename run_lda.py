@@ -3,7 +3,7 @@ import gensim
 from gensim.models import ldamodel
 from gensim.corpora.dictionary import Dictionary
 
-from gensim.models.callbacks import CoherenceCallback
+from gensim.models.callbacks import Coherence, Diff, Perplexity
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -24,12 +24,12 @@ texts = [['bank','river','shore','water'],
 dictionary = Dictionary(texts)
 corpus = [dictionary.doc2bow(text) for text in texts]
 
-callbacks = [CoherenceCallback(corpus=corpus, coherence="u_mass", texts=texts, window_size=10, logger='visdom', viz_env='LdaModel')]
+callbacks = [Coherence(corpus=corpus, coherence="u_mass", texts=texts, window_size=10, logger='shell', viz_env='LdaModel'), Diff(logger='shell', viz_env='LdaModel')]
 
 # training LDA model
-model = ldamodel.LdaModel(corpus=corpus, id2word=dictionary, passes=10, callbacks=callbacks)
+model = ldamodel.LdaModel(corpus=corpus, id2word=dictionary, passes=5, num_topics=5, callbacks=callbacks)
 
 # to get coherence value from anywhere else (ex. sklearn score)
-print(CoherenceCallback(model=model, corpus=corpus, coherence="u_mass").get_metric())
+print(Coherence(coherence="u_mass", texts=texts).get_value(model=model))
 
-
+# callbacks = [Coherence(corpus=corpus, coherence="u_mass"), Coherence(corpus=corpus, coherence="c_v")]

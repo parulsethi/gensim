@@ -47,6 +47,8 @@ from scipy.special import polygamma
 from six.moves import xrange
 import six
 
+from gensim.models.callbacks import Callback
+
 # log(sum(exp(x))) that tries to avoid overflow
 try:
     # try importing from here if older scipy is installed
@@ -628,8 +630,8 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
             return pow(offset + pass_ + (self.num_updates / chunksize), -decay)
 
         if self.callbacks:
-            for callback in self.callbacks:
-                callback.set_model(self)
+            callback = Callback(self.callbacks)
+            callback.set_model(self)
 
         for pass_ in xrange(passes):
             if self.dispatcher:
@@ -684,8 +686,7 @@ class LdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
                 raise RuntimeError("input corpus size changed during training (don't use generators as input)")
 
             if self.callbacks:
-                for callback in self.callbacks:
-                    callback.on_epoch_end(pass_)
+                callback.on_epoch_end(pass_)
 
             if dirty:
                 # finish any remaining updates
